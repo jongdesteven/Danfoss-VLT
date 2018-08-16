@@ -16,8 +16,6 @@ import paho.mqtt.client as mqtt
 #    20,21   Checksum               '??' for no control
 #    22      Stop Byte              '>'
 
-received = False
-
 parameterText = {
   '000': {'name':'Language', 0:'English', 1: 'German', 2:'French', 3: 'Danish'},
   '001': {'name':'Menu Setup Select', 1:'Setup 1', 2: 'Setup 2', 5:'Multi-Setup'},
@@ -57,7 +55,7 @@ parameterText = {
   '206': {'name':'Digital Reference 2', 'unit':'% of f-max - f-min'},
   '207': {'name':'Digital Reference 3', 'unit':'% of f-max - f-min'},
   '208': {'name':'Digital Reference 4', 'unit':'% of f-max - f-min'},
-  '201': {'name':'Current Limit', 'unit':'A'},
+  '209': {'name':'Current Limit', 'unit':'A'},
   '210': {'name':'Warning: Low Frequency', 'unit':'Hz'},
   '211': {'name':'Warning: High Frequency', 'unit':'Hz'},
   '213': {'name':'Warning: High Current', 'unit':'A'},
@@ -84,7 +82,7 @@ parameterText = {
   '413': {'name':'Terminal 60 Analog Input Current', 0:'No Function', 1:'0 to 20 mA', 2:'4 to 20 mA', 3:'20 to 0 mA', 4:'20 to 4 mA'},
   '500': {'name':'Address'},
   '501': {'name':'Baud Rate', 'unit':'bits/s'},
-  '501': {'name':'Data Readout', 0:'Reference', 1:'Frequency', 2:'Display/Feedback', 3:'Current', 4:'Torque', 5:'Power', 8:'Motor voltage', 9:'DC voltage', 10:'Motor thermal load', 11:'Thermal inverter load', 12:'Digital input', 13:'Analog input 1', 14:'Analog input 2', 15:'Warning parameter', 16:'Control word', 17:'Status word', 18:'Alarm parameter', 19:'Software version no. 4 digits'},
+  '502': {'name':'Data Readout', 0:'Reference', 1:'Frequency', 2:'Display/Feedback', 3:'Current', 4:'Torque', 5:'Power', 8:'Motor voltage', 9:'DC voltage', 10:'Motor thermal load', 11:'Thermal inverter load', 12:'Digital input', 13:'Analog input 1', 14:'Analog input 2', 15:'Warning parameter', 16:'Control word', 17:'Status word', 18:'Alarm parameter', 19:'Software version no. 4 digits'},
   '503': {'name':'Coasting', 0:'Digital', 1:'Bus', 2: 'Logical and', 3:'Logical or'},
   '504': {'name':'Quick-Stop', 0:'Digital', 1:'Bus', 2: 'Logical and', 3:'Logical or'},
   '505': {'name':'DC Brake', 0:'Digital', 1:'Bus', 2: 'Logical and', 3:'Logical or'},
@@ -127,26 +125,30 @@ statuswordtext = [
 ]
 
 controlwordtext = [
-    [["On 1",				"Off 1"],
-    ["On 2", 				"Off 2"],
-    ["On 3",				"Off 3"],
-    ["Enabled",				"Coasting"]],
+     [["Off 1", "On 1"],
+     ["Off 2", "On 2"],
+     ["Off 3", "On 3"],
+     ["Coasting", "Enabled"]],
 
-    [["Ramp", 				"Quick Stop"],
-    ["Use Ramp", 			"Hold Frequency Output"],
-    ["Start", 				"Ramp Stop"],
-    ["Reset", 				"No Function"]],
+     [["Quick Stop", "Ramp"],
+     ["Hold Frequency Output", "Use Ramp"],
+     ["Ramp Stop", "Start"],
+     ["No Function", "Reset"]],
 
-    [["Jog 1 On", 			"Jog 1 Off"],
-    ["Jog 2 On", 			"Jog 2 Off"],
-    ["Data  Valid", 		"Data Not Valid"],
-    ["Slow Down", 			"No Function"]],
+     [["Jog 1 Off", "Jog 1 On"],
+     ["Jog 2 Off", "Jog 2 On"],
+     ["Data not Valid","Data Valid"],
+     ["No Function", "Slow Down"]],
 
-    [["Catch Up", 			"No Function"],
-    ["Select Setup 1", 		"Param setup"],
-    ["Select Setup 2", 		"Param Setup"],
-    ["Reversing", 			"No Function"]]
-]
+     [["No Function", "Catch Up"],
+     ["Param setup", "Select Setup 1"],
+     ["Param Setup", "Select Setup 2"],
+     ["No Function", "Reversing"]]
+ ]
+
+received = False
+startControlWord = b'OGD@'
+
 
 VLTdata = {
     'startbyte': b'<',
@@ -194,8 +196,15 @@ def buildTelegram():
 
 #U (update)
 #Means that the data value, bytes (13-17), must be read into the drive.
-def updateVLT(parameter, data):
-  print('updateVLT')
+def updateVLT(client, parameter, data):
+  print('Writing to parameter:{} data:{}'.format(parameter, data))
+  VLTdata['controlchar'] = b'U'
+  VLTdata['ctrlstatus'] = b'0000'
+  VLTdata['parameter'] = '{:>04d}'.format(parameter).encode(encoding="utf-8")
+  VLTdata['data'] = '{:>05d}'.format(data).encode(encoding="utf-8")
+  VLTdata['checksum'] = b'??'
+  print('Sending: {}'.format(buildTelegram()))
+  client.publish('mqtt_serial/tx', payload=buildTelegram(), qos=0, retain=False)
 
 #R (read)
 #Means that the master wishes to read the data value of the parameter in bytes 8 through 11.
@@ -212,8 +221,15 @@ def readVLT(client, parameter):
 #C (control)
 #Means that the drive reads only the four command bytes, 4 through 7, and returns with status.
 #Parameter number and data value are ignored.
-def controlVLT(controlbytes):
-  print('controlVLT');
+def controlVLT(client, controlword):
+    print('controlVLT');
+    VLTdata['controlchar'] = b'C'
+    VLTdata['ctrlstatus'] = controlword
+    VLTdata['parameter'] = b'0000'
+    VLTdata['data'] = b'00000'
+    VLTdata['checksum'] = b'??'
+    #print('Sending: {}'.format(buildTelegram()))
+    client.publish('mqtt_serial/tx', payload=buildTelegram(), qos=0, retain=False)
 
 #I (read index)
 #Means that the drive reads the index and parameter and returns with status.
@@ -225,7 +241,7 @@ def readIndexVLT(client, parameter, index):
   VLTdata['parameter'] = '{:>04d}'.format(parameter).encode(encoding="utf-8")
   VLTdata['data'] = '{:>05d}'.format(index).encode(encoding="utf-8")
   VLTdata['checksum'] = b'??'
-  print('Sending: {}'.format(buildTelegram()))
+  #print('Sending: {}'.format(buildTelegram()))
   client.publish('mqtt_serial/tx', payload=buildTelegram(), qos=0, retain=False)
 
 def printControlWord( controlword ):
@@ -235,14 +251,17 @@ def printControlWord( controlword ):
       print("{}.{}={}: {}".format(x, y, enabled, controlwordtext[x][y][enabled]))
 
 def printStatusWord( statusword ):
+  print("### Status Word: {} ###".format(VLTdata['ctrlstatus']))
+  bitnr = 0
   for x in range(4):
     for y in range(4):
       enabled = 1 if statusword[x] & 1<<y else 0
-      print("{}.{}={}: {}".format(x, y, enabled, statuswordtext[x][y][enabled]))
+      print("{:02d}={}: {}".format(bitnr, enabled, statuswordtext[x][y][enabled]))
+      bitnr += 1
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
-    print("Connected with result code "+str(rc))
+    #print("Connected with result code "+str(rc))
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
     client.subscribe("mqtt_serial/rx")
@@ -255,10 +274,16 @@ def on_message(client, userdata, msg):
   received = True
 
 def neatPrinting( ):
-#    para = VLTdata['parameter']
     para = VLTdata['parameter'][1:].decode("utf-8")
     dat = int(VLTdata['data'])
-    if para in parameterText:
+    if VLTdata['comma'] == b'9':
+      print("VLT returned: Invalid Parameter")
+      return
+    elif para == '502':
+      #special feature, data readout
+      print('Parameter {}: {}'.format(para, dat))
+      return
+    elif para in parameterText:
       print("Parameter {}: {}".format(para, parameterText[para]['name']))
       if 'unit' in parameterText[para]:
         print("Value: {}{}".format( float(VLTdata['data'])/10**int(VLTdata['comma']), parameterText[para]['unit'] ))
@@ -276,18 +301,26 @@ client.on_message = on_message
 client.connect("raspi", 1883, 60)
 client.loop_start()
 
-if len(sys.argv) == 2:
-    readVLT(client, int(sys.argv[1]))
-elif len(sys.argv) == 3:
-    readIndexVLT(client, int(sys.argv[1]), int(sys.argv[2]))
+#printControlWord(startControlWord)
 
+if (sys.argv[1] == 'read'):
+    readVLT(client, int(sys.argv[2]))
+elif (sys.argv[1] == 'control'):
+    controlVLT(client, sys.argv[2])
+elif (sys.argv[1] == 'update'):
+    updateVLT(client, int(sys.argv[2]), int(sys.argv[3]))
+elif (sys.argv[1] == 'index'):
+    readIndexVLT(client, int(sys.argv[2]), int(sys.argv[3]))
+else:
+    print("Invalid arguments")
+    sys.exit()
+
+# wait for response on mqtt
 while not received:
     pass
 
-
-if VLTdata['controlchar'] == b'I' or VLTdata['controlchar'] == b'R':
-    neatPrinting()
-    printStatusWord(VLTdata['ctrlstatus'])
+neatPrinting()
+printStatusWord(VLTdata['ctrlstatus'])
 
 
 client.disconnect()
