@@ -224,11 +224,11 @@ def readVLT(client, parameter):
 def controlVLT(client, controlword):
     print('controlVLT');
     VLTdata['controlchar'] = b'C'
-    VLTdata['ctrlstatus'] = controlword
+    VLTdata['ctrlstatus'] = controlword.encode(encoding="utf-8")
     VLTdata['parameter'] = b'0000'
     VLTdata['data'] = b'00000'
     VLTdata['checksum'] = b'??'
-    #print('Sending: {}'.format(buildTelegram()))
+    print('Sending: {}'.format(buildTelegram()))
     client.publish('mqtt_serial/tx', payload=buildTelegram(), qos=0, retain=False)
 
 #I (read index)
@@ -298,7 +298,7 @@ client = mqtt.Client()
 client.on_connect = on_connect
 client.on_message = on_message
 
-client.connect("raspi", 1883, 60)
+client.connect("tinysrv", 1883, 60)
 client.loop_start()
 
 #printControlWord(startControlWord)
